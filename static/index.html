@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AirPad: control your PC from your phone</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+main{height:100%;display:grid;place-items:center;padding:16px}
+.card{width:min(440px,100%);padding:28px;text-align:center}
+h1{margin:0 0 6px;font-size:30px;letter-spacing:-.02em}
+#qr{width:230px;height:230px;margin:18px auto;background:#fff;border-radius:20px;padding:14px;display:block}
+pre{text-align:left;background:rgba(0,0,0,.35);padding:12px;border-radius:14px;overflow:auto;font-size:13px}
+.ask{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:10px 12px;margin-top:10px;border-radius:16px}
+</style></head>
+<body><main><section class="glass card">
+<h1>AirPad</h1>
+<div id="no" hidden>
+  <p class="dim">Run the AirPad agent on the PC you want to control. It opens this page again with your QR code.</p>
+  <pre>pip install -r requirements.txt
+python agent.py --server <span id="host"></span></pre>
+</div>
+<div id="yes" hidden>
+  <p id="st" class="dim">Waiting for the PC agent…</p>
+  <img id="qr" alt="QR code to connect your phone">
+  <p class="dim">Scan with your phone camera. You'll approve the phone here.</p>
+  <div id="asks"></div>
+</div>
+</section></main>
+<script>
+const q=new URLSearchParams(location.search),s=q.get('s'),k=q.get('k');
+document.getElementById('host').textContent=location.origin;
+if(!s||!k){no.hidden=false}else{
+  yes.hidden=false;qr.src='/qr/'+s+'.svg';
+  const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+`/ws/ui?s=${s}&k=${k}`);
+  const answer=(pid,ok)=>{ws.send(JSON.stringify({t:'allow',pid,ok}));document.getElementById('a'+pid)?.remove();
+    if(ok)st.textContent='Phone connected. You can leave this tab open.'};
+  ws.onmessage=e=>{const d=JSON.parse(e.data);
+    if(d.t==='agent')st.textContent=d.on?'Agent connected. Ready for your phone.':'Agent disconnected. Run it again.';
+    if(d.t==='ask'){const el=document.createElement('div');el.className='ask glass';el.id='a'+d.pid;
+      el.innerHTML='<span>A phone wants to control this PC</span><span><button data-y>Allow</button> <button data-n>Deny</button></span>';
+      el.querySelector('[data-y]').onclick=()=>answer(d.pid,true);el.querySelector('[data-n]').onclick=()=>answer(d.pid,false);
+      asks.append(el)}
+    if(d.t==='gone')document.getElementById('a'+d.pid)?.remove()};
+  ws.onclose=()=>st.textContent='Connection lost. Reload this page.';
+}
+</script></body></html>
