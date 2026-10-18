@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>AirPad Remote</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+body{display:flex;flex-direction:column;gap:8px;padding:max(8px,env(safe-area-inset-top)) 8px max(8px,env(safe-area-inset-bottom));
+ user-select:none;-webkit-user-select:none;touch-action:none}
+#view{flex:0 0 36vh;overflow:hidden;display:flex;align-items:center;border-radius:18px;background:#000;position:relative}
+canvas{width:100%;height:auto;transform-origin:center}
+[data-tab=zoom] #view{flex:1}[data-tab=files] #view{display:none}[data-tab=game] #view{flex-basis:26vh}
+#rz{position:absolute;right:8px;top:8px;display:none;padding:6px 10px}[data-tab=zoom] #rz{display:block}
+.panel{display:none;flex:1;min-height:0;padding:12px;gap:10px;flex-direction:column}
+.panel.on{display:flex}[data-tab=zoom] .panel{display:none!important}
+nav{display:flex;gap:6px;padding:6px}nav button{flex:1;padding:10px 2px;font-size:13px;border-radius:14px}
+#ov{position:fixed;inset:0;z-index:9;display:grid;place-items:center;text-align:center;padding:24px;margin:20px;border-radius:26px;
+ background:rgba(8,12,40,.55)}#ov.hide{display:none}
+#pad{flex:1;border-radius:18px;background:rgba(255,255,255,.07);border:1px dashed rgba(255,255,255,.3);display:grid;place-items:center}
+.row{display:flex;gap:8px}.row>*{flex:1}
+textarea{width:100%;height:84px;border-radius:14px;border:1px solid rgba(255,255,255,.3);background:rgba(0,0,0,.3);color:#fff;padding:10px;font:inherit;user-select:text;-webkit-user-select:text;touch-action:auto}
+#list{flex:1;overflow:auto;touch-action:pan-y}
+.f{display:flex;justify-content:space-between;gap:8px;padding:11px 8px;border-bottom:1px solid rgba(255,255,255,.12)}
+#game{position:relative;flex:1}
+#game button{position:absolute;width:64px;height:64px;border-radius:50%;padding:0;font-weight:700}
+</style></head>
+<body data-tab="track">
+<div id="ov" class="glass"><div><b id="ovt">Connecting…</b><p class="dim" id="ovs">Approve this phone on your PC screen.</p></div></div>
+<div id="view"><canvas id="cv" width="16" height="9"></canvas><button id="rz">Reset zoom</button></div>
+
+<section class="panel glass on" id="p-track">
+  <div id="pad"><span class="dim">1 finger: move · tap: click · 2 fingers: scroll / right-click</span></div>
+  <div class="row"><button data-b="left">Left</button><button data-b="right">Right</button><button id="drag">Drag lock</button></div>
+  <label class="dim">Speed <input id="sens" type="range" min="1" max="5" step=".25" value="2.2" style="width:60%"></label>
+</section>
+
+<section class="panel glass" id="p-keys">
+  <textarea id="live" placeholder="Type here: every character appears on the PC instantly"></textarea>
+  <div class="row"><button data-k="esc">Esc</button><button data-k="tab">Tab</button><button data-k="backspace">⌫</button><button data-k="enter">Enter</button></div>
+  <div class="row"><button data-k="left">←</button><button data-k="up">↑</button><button data-k="down">↓</button><button data-k="right">→</button></div>
+  <div class="row"><button data-c="ctrl,c">Copy</button><button data-c="ctrl,v">Paste</button><button data-c="ctrl,z">Undo</button><button data-c="alt,tab">Alt+Tab</button><button data-k="cmd">Win</button></div>
+</section>
+
+<section class="panel glass" id="p-files">
+  <div class="row"><button id="up">⬆ Up</button><button id="uplbl">Upload to PC</button></div>
+  <input id="file" type="file" multiple hidden>
+  <div class="dim" id="cwd">/</div><div id="list"></div><div class="dim" id="msg"></div>
+</section>
+
+<section class="panel glass" id="p-game"><div id="game"></div></section>
+
+<nav class="glass">
+  <button data-tab="track" class="on">Trackpad</button><button data-tab="zoom">Zoom</button>
+  <button data-tab="keys">Keys</button><button data-tab="files">Files</button><button data-tab="game">Gamepad</button>
+</nav>
+
+<script>
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws/phone?s='+new URLSearchParams(location.search).get('s'));
+const send=o=>ws.readyState===1&&ws.send(JSON.stringify(o));
+const buzz=()=>navigator.vibrate&&navigator.vibrate(8);
+let tab='track',cwd='';
+
+/* ---- connection + screen ---- */
+const cv=$('#cv'),cx=cv.getContext('2d');
+ws.onmessage=async e=>{
+  if(e.data instanceof Blob){const b=await createImageBitmap(e.data);
+    if(cv.width!==b.width){cv.width=b.width;cv.height=b.height}cx.drawImage(b,0,0);b.close();return}
+  const d=JSON.parse(e.data);
+  if(d.t==='ready'){$('#ov').classList.add('hide');ls('')}
+  if(d.t==='wait'){$('#ovt').textContent='Waiting for approval…'}
+  if(d.t==='denied'){$('#ov').classList.remove('hide');$('#ovt').textContent='Denied by the PC';$('#ovs').textContent=''}
+  if(d.t==='ls')render(d);
+  if(d.t==='chunk')gotChunk(d);
+  if(d.t==='put'){$('#msg').textContent='Uploaded '+d.name;ls(cwd)}
+  if(d.t==='err')$('#msg').textContent='Error: '+d.m;
+};
+ws.onclose=()=>{$('#ov').classList.remove('hide');$('#ovt').textContent='Disconnected';$('#ovs').textContent='Reload this page to reconnect.'};
+
+/* ---- tabs ---- */
+$$('nav button').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;document.body.dataset.tab=tab;
+  $$('nav button').forEach(x=>x.classList.toggle('on',x===b));
+  $$('.panel').forEach(p=>p.classList.toggle('on',p.id==='p-'+tab));resetZoom()});
+
+/* ---- trackpad ---- */
+const cen=t=>{let x=0,y=0;for(const p of t){x+=p.clientX;y+=p.clientY}return[x/t.length,y/t.length]};
+let px,py,t0,moved,fingers,sa=0;
+const pad=$('#pad'),opt={passive:false};
+pad.addEventListener('touchstart',e=>{e.preventDefault();if(e.touches.length===1){t0=Date.now();moved=0;fingers=1}
+  else fingers=Math.max(fingers,e.touches.length);[px,py]=cen(e.touches)},opt);
+pad.addEventListener('touchmove',e=>{e.preventDefault();const[x,y]=cen(e.touches),dx=x-px,dy=y-py;px=x;py=y;moved+=Math.abs(dx)+Math.abs(dy);
+  const sens=+$('#sens').value;
+  if(e.touches.length===1)send({t:'mv',dx:dx*sens,dy:dy*sens});
+  else{sa+=dy/10;const n=Math.trunc(sa);if(n){send({t:'sc',dy:n});sa-=n}}},opt);
+pad.addEventListener('touchend',e=>{e.preventDefault();
+  if(!e.touches.length){if(Date.now()-t0<220&&moved<10)send({t:'click',b:fingers>1?'right':'left'});fingers=0}},opt);
+$$('[data-b]').forEach(b=>b.onclick=()=>{buzz();send({t:'click',b:b.dataset.b})});
+let dragging=false;$('#drag').onclick=e=>{dragging=!dragging;e.target.classList.toggle('on',dragging);send({t:'btn',b:'left',d:dragging?1:0})};
+
+/* ---- zoom mode: pinch/pan the view, tap to click where you tap ---- */
+let z=1,tx=0,ty=0,g={};
+const apply=()=>cv.style.transform=`translate(${tx}px,${ty}px) scale(${z})`;
+function resetZoom(){z=1;tx=ty=0;apply()}$('#rz').onclick=resetZoom;
+const dist=t=>t.length<2?0:Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);
+const base=e=>g={t:Date.now(),m:g.m||0,d:dist(e.touches),z,c:cen(e.touches),tx,ty};
+const view=$('#view');
+view.addEventListener('touchstart',e=>{if(tab!=='zoom')return;e.preventDefault();if(e.touches.length===1)g={m:0};base(e)},opt);
+view.addEventListener('touchmove',e=>{if(tab!=='zoom')return;e.preventDefault();const c=cen(e.touches);
+  g.m+=Math.abs(c[0]-g.c[0])+Math.abs(c[1]-g.c[1])>0?1:0;
+  if(e.touches.length===2)z=Math.min(6,Math.max(1,g.z*dist(e.touches)/g.d));
+  tx=g.tx+c[0]-g.c[0];ty=g.ty+c[1]-g.c[1];apply()},opt);
+view.addEventListener('touchend',e=>{if(tab!=='zoom')return;e.preventDefault();
+  if(e.touches.length)return base(e);
+  if(Date.now()-g.t<250&&g.m<4){const t=e.changedTouches[0],r=cv.getBoundingClientRect();
+    send({t:'abs',fx:(t.clientX-r.left)/r.width,fy:(t.clientY-r.top)/r.height});send({t:'click',b:'left'})}},opt);
+
+/* ---- keyboard ---- */
+$('#live').addEventListener('input',e=>{
+  if(e.inputType==='insertText'&&e.data)send({t:'text',s:e.data});
+  else if(e.inputType==='insertLineBreak')send({t:'key',k:'enter',d:2});
+  else if(e.inputType==='deleteContentBackward')send({t:'key',k:'backspace',d:2});
+  else if(e.inputType==='insertFromPaste'&&e.data)send({t:'text',s:e.data});
+  if($('#live').value.length>200)$('#live').value=''});
+$$('[data-k]').forEach(b=>b.onclick=()=>{buzz();send({t:'key',k:b.dataset.k,d:2})});
+$$('[data-c]').forEach(b=>b.onclick=()=>{buzz();send({t:'combo',k:b.dataset.c.split(',')})});
+
+/* ---- cloud storage ---- */
+const ls=p=>{cwd=p;$('#cwd').textContent='/'+p;send({t:'ls',path:p})};
+const fmt=n=>n>1e9?(n/1e9).toFixed(1)+' GB':n>1e6?(n/1e6).toFixed(1)+' MB':Math.ceil(n/1e3)+' KB';
+function render(d){const l=$('#list');l.textContent='';
+  for(const i of d.items){const r=document.createElement('div');r.className='f';
+    r.innerHTML='<span></span><span class="dim"></span>';r.firstChild.textContent=(i.d?'📁 ':'📄 ')+i.n;r.lastChild.textContent=i.d?'':fmt(i.s);
+    r.onclick=()=>{const p=(cwd?cwd+'/':'')+i.n;if(i.d)ls(p);else{$('#msg').textContent='Downloading '+i.n+'…';send({t:'get',path:p})}};l.append(r)}}
+$('#up').onclick=()=>ls(cwd.split('/').slice(0,-1).join('/'));
+$('#uplbl').onclick=()=>$('#file').click();
+const dl={};
+function gotChunk(d){(dl[d.name]??=[]).push(Uint8Array.from(atob(d.b),c=>c.charCodeAt(0)));
+  if(d.last){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(dl[d.name]));a.download=d.name;a.click();
+    delete dl[d.name];$('#msg').textContent='Saved '+d.name}}
+const b64=b=>new Promise(r=>{const f=new FileReader();f.onload=()=>r(f.result.split(',')[1]);f.readAsDataURL(b)});
+$('#file').onchange=async e=>{for(const f of e.target.files){const C=192*1024,n=Math.max(1,Math.ceil(f.size/C));
+  for(let i=0;i<n;i++){while(ws.bufferedAmount>1e6)await new Promise(r=>setTimeout(r,30));
+    send({t:'put',path:cwd,name:f.name,i,last:i===n-1,b:await b64(f.slice(i*C,(i+1)*C))});
+    $('#msg').textContent=`Uploading ${f.name} ${Math.round((i+1)/n*100)}%`}}e.target.value=''};
+
+/* ---- gamepad: edit this map to match your game ---- */
+const PAD={dpad:{'▲':'w','◀':'a','▼':'s','▶':'d'},face:{A:'k',B:'l',X:'j',Y:'i'},mid:{Select:'tab',Start:'enter'},sh:{L:'q',R:'e'}};
+const gm=$('#game');
+function pbtn(label,k,x,y,w){const b=document.createElement('button');b.textContent=label;b.style.cssText=`left:${x};top:${y}`;if(w)b.style.width=w,b.style.borderRadius='22px';
+  const dn=e=>{e.preventDefault();b.setPointerCapture(e.pointerId);b.classList.add('on');buzz();send({t:'key',k,d:1})};
+  const up=e=>{b.classList.remove('on');send({t:'key',k,d:0})};
+  b.onpointerdown=dn;b.onpointerup=up;b.onpointercancel=up;b.oncontextmenu=e=>e.preventDefault();gm.append(b)}
+const D=Object.entries(PAD.dpad),dp=[['5%','0%'],['0%','38%'],['5%','76%'],['26%','38%']];
+D.forEach(([l,k],i)=>pbtn(l,k,`calc(${dp[i][0]} + 40px)`,`calc(${dp[i][1]} - 0px)`));
+Object.entries(PAD.face).forEach(([l,k],i)=>pbtn(l,k,`calc(100% - ${[90,150,90,30][i]}px - 40px)`,['0%','38%','76%','38%'][i]));
+Object.entries(PAD.mid).forEach(([l,k],i)=>pbtn(l,k,`calc(50% - 90px + ${i*100}px)`,'60%','80px'));
+Object.entries(PAD.sh).forEach(([l,k],i)=>pbtn(l,k,i?'calc(100% - 90px)':'10px','-4px','80px'));
+</script></body></html>
