@@ -1,0 +1,18 @@
+:root{--ink:#f4f7ff;--dim:#b4bedb;--acc:#7cf2ff}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%}
+body{font:500 15px/1.4 ui-rounded,"SF Pro Rounded",system-ui,sans-serif;color:var(--ink);overflow:hidden;
+ background:radial-gradient(60vmax 60vmax at 10% 0%,#5b3df5 0%,transparent 60%),
+ radial-gradient(50vmax 50vmax at 100% 20%,#00c2d6 0%,transparent 55%),
+ radial-gradient(60vmax 60vmax at 40% 110%,#ff4f9a 0%,transparent 55%),#0b1030}
+.glass{background:linear-gradient(135deg,rgba(255,255,255,.22),rgba(255,255,255,.06));
+ backdrop-filter:blur(22px) saturate(180%);-webkit-backdrop-filter:blur(22px) saturate(180%);
+ border:1px solid rgba(255,255,255,.28);border-radius:22px;
+ box-shadow:inset 0 1px 0 rgba(255,255,255,.55),inset 0 -1px 0 rgba(255,255,255,.08),0 10px 34px rgba(0,0,0,.35)}
+button,.btn{font:inherit;color:var(--ink);cursor:pointer;border:1px solid rgba(255,255,255,.3);border-radius:16px;
+ padding:10px 14px;background:linear-gradient(160deg,rgba(255,255,255,.28),rgba(255,255,255,.07));
+ box-shadow:inset 0 1px 0 rgba(255,255,255,.5);touch-action:none;user-select:none;-webkit-user-select:none}
+button:active,button.on{background:linear-gradient(160deg,rgba(124,242,255,.55),rgba(124,242,255,.18))}
+button:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.dim{color:var(--dim)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
