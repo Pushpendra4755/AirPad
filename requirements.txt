@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+qrcode
+websockets
+requests
+mss
+pillow
+pynput
