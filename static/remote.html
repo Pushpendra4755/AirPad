@@ -65,7 +65,7 @@ let tab='track',cwd='';
 const cv=$('#cv'),cx=cv.getContext('2d');
 ws.onmessage=async e=>{
   if(e.data instanceof Blob){const b=await createImageBitmap(e.data);
-    if(cv.width!==b.width){cv.width=b.width;cv.height=b.height}cx.drawImage(b,0,0);b.close();return}
+    if(cv.width!==b.width){cv.width=b.width;cv.height=b.height}cx.drawImage(b,0,0);b.close();send({t:'ack'});return}
   const d=JSON.parse(e.data);
   if(d.t==='ready'){$('#ov').classList.add('hide');ls('')}
   if(d.t==='wait'){$('#ovt').textContent='Waiting for approval…'}
