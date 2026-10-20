@@ -1,7 +1,7 @@
 """AirPad relay server (deploy this). Pairs a PC agent with phones and relays traffic.
 Run: uvicorn server:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips="*"
 Keep ONE worker: sessions live in memory."""
-import asyncio, io, json, secrets
+import asyncio, io, json, secrets, time
 from pathlib import Path
 
 import qrcode, qrcode.image.svg
@@ -40,13 +40,11 @@ async def sync(ses: Session):
 
 
 async def send_frame(p: Phone, data: bytes):
-    p.busy = True            # slow phone? skip frames instead of building latency
+    p.busy = time.time()     # stays busy until the phone ACKs this frame, so frames never queue up
     try:
         await p.ws.send_bytes(data)
     except Exception:
-        pass
-    finally:
-        p.busy = False
+        p.busy = 0
 
 
 def get(s: str, k: str | None = None):
@@ -88,7 +86,7 @@ async def agent_ws(ws: WebSocket, s: str, k: str):
                 break
             if m.get("bytes"):                      # screen frame -> every approved phone
                 for p in ses.phones.values():
-                    if p.ok and not p.busy:
+                    if p.ok and (not p.busy or time.time() - p.busy > 1):
                         asyncio.create_task(send_frame(p, m["bytes"]))
             elif m.get("text"):                     # reply addressed to one phone (pid)
                 p = ses.phones.get(json.loads(m["text"]).get("pid"))
@@ -135,6 +133,9 @@ async def phone_ws(ws: WebSocket, s: str):
     try:
         while True:
             d = json.loads(await ws.receive_text())
+            if d.get("t") == "ack":                 # phone finished drawing a frame: send the next one
+                p.busy = 0
+                continue
             if p.ok and ses.agent:                  # nothing is forwarded until the PC approves
                 d["pid"] = pid
                 await ses.agent.send_text(json.dumps(d))
