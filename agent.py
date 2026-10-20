@@ -71,11 +71,28 @@ def capture_loop(ws, loop, state):
                 shot = sct.grab(MON)
                 img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
                 img = img.resize((A.width, int(img.height * A.width / img.width)), Image.BILINEAR)
-                draw_cursor(img)
                 buf = io.BytesIO()
                 img.save(buf, "JPEG", quality=A.quality)
                 pending = asyncio.run_coroutine_threadsafe(ws.send(buf.getvalue()), loop)
             time.sleep(max(0.0, 1 / A.fps - (time.time() - t0)))
+
+
+async def cursor_loop(ws, state):
+    """Send the pointer position on its own (tiny, 60x/sec) so it doesn't wait for screen frames."""
+    last = None
+    while True:
+        await asyncio.sleep(1 / 60)
+        if not state["on"]:
+            last = None
+            continue
+        try:
+            pos = tuple(mouse.position)
+        except Exception:
+            continue
+        if pos != last:
+            last = pos
+            await ws.send(json.dumps({"t": "cur", "fx": (pos[0] - MON["left"]) / MON["width"],
+                                      "fy": (pos[1] - MON["top"]) / MON["height"]}))
 
 
 async def handle(ws, d):
@@ -145,6 +162,7 @@ async def main():
                                   max_size=None) as ws:
         state = {"on": False}
         threading.Thread(target=capture_loop, args=(ws, asyncio.get_running_loop(), state), daemon=True).start()
+        asyncio.create_task(cursor_loop(ws, state))
         async for m in ws:
             d = json.loads(m)
             if d["t"] == "stream":
