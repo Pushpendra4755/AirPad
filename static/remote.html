@@ -7,10 +7,7 @@
 body{display:flex;flex-direction:column;gap:8px;padding:max(8px,env(safe-area-inset-top)) 8px max(8px,env(safe-area-inset-bottom));
  user-select:none;-webkit-user-select:none;touch-action:none}
 #view{flex:0 0 36vh;overflow:hidden;display:flex;align-items:center;border-radius:18px;background:#000;position:relative}
-#stage{position:relative;width:100%;transform-origin:center}
-canvas{width:100%;height:auto;display:block}
-#cur{position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;will-change:left,top}
-#cur svg{position:absolute;left:-6px;top:-2px;overflow:visible}
+canvas{width:100%;height:auto;transform-origin:center}
 [data-tab=zoom] #view{flex:1}[data-tab=files] #view{display:none}[data-tab=game] #view{flex-basis:26vh}
 #rz{position:absolute;right:8px;top:8px;display:none;padding:6px 10px}[data-tab=zoom] #rz{display:block}
 .panel{display:none;flex:1;min-height:0;padding:12px;gap:10px;flex-direction:column}
@@ -30,10 +27,7 @@ textarea{width:100%;height:56px;border-radius:14px;border:1px solid rgba(255,255
 </style></head>
 <body data-tab="track">
 <div id="ov" class="glass"><div><b id="ovt">Connecting…</b><p class="dim" id="ovs">Approve this phone on your PC screen.</p></div></div>
-<div id="view"><div id="stage"><canvas id="cv" width="16" height="9"></canvas>
-  <div id="cur"><svg width="26" height="32" viewBox="-6 -2 26 32"><circle cx="0" cy="0" r="9" fill="none" stroke="#ff465a" stroke-width="2"/>
-  <polygon points="0,0 0,17 4,13 8,21 11,20 7,12 12,12" fill="#fff" stroke="#000" stroke-width="1"/></svg></div></div>
-  <button id="rz">Reset zoom</button></div>
+<div id="view"><canvas id="cv" width="16" height="9"></canvas><button id="rz">Reset zoom</button></div>
 
 <section class="panel glass on" id="p-track">
   <div id="pad"><span class="dim">1 finger: move · tap: click · 2 fingers: scroll / right-click</span></div>
@@ -73,7 +67,6 @@ ws.onmessage=async e=>{
   if(e.data instanceof Blob){const b=await createImageBitmap(e.data);
     if(cv.width!==b.width){cv.width=b.width;cv.height=b.height}cx.drawImage(b,0,0);b.close();send({t:'ack'});return}
   const d=JSON.parse(e.data);
-  if(d.t==='cur'){const c=$('#cur');c.style.left=d.fx*100+'%';c.style.top=d.fy*100+'%'}
   if(d.t==='ready'){$('#ov').classList.add('hide');ls('')}
   if(d.t==='wait'){$('#ovt').textContent='Waiting for approval…'}
   if(d.t==='denied'){$('#ov').classList.remove('hide');$('#ovt').textContent='Denied by the PC';$('#ovs').textContent=''}
@@ -107,7 +100,7 @@ let dragging=false;$('#drag').onclick=e=>{dragging=!dragging;e.target.classList.
 
 /* ---- zoom mode: pinch/pan the view, tap to click where you tap ---- */
 let z=1,tx=0,ty=0,g={};
-const apply=()=>$('#stage').style.transform=`translate(${tx}px,${ty}px) scale(${z})`;
+const apply=()=>cv.style.transform=`translate(${tx}px,${ty}px) scale(${z})`;
 function resetZoom(){z=1;tx=ty=0;apply()}$('#rz').onclick=resetZoom;
 const dist=t=>t.length<2?0:Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);
 const base=e=>g={t:Date.now(),m:g.m||0,d:dist(e.touches),z,c:cen(e.touches),tx,ty};
