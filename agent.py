@@ -13,8 +13,8 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--server", required=True)
 ap.add_argument("--root", default=str(Path.home()), help="folder exposed as cloud storage")
 ap.add_argument("--fps", type=int, default=24)
-ap.add_argument("--width", type=int, default=1280)
-ap.add_argument("--quality", type=int, default=55)
+ap.add_argument("--width", type=int, default=960)
+ap.add_argument("--quality", type=int, default=45)
 A = ap.parse_args()
 
 ROOT = Path(A.root).resolve()
@@ -22,7 +22,9 @@ CHUNK = 192 * 1024
 mouse, kb = Mouse(), Kb()
 BTN = {"left": Button.left, "right": Button.right}
 KEYS = {n: getattr(Key, n) for n in
-        "enter backspace tab esc space up down left right delete home end page_up page_down shift ctrl alt cmd".split()}
+        ("enter backspace tab esc space up down left right delete home end page_up page_down shift ctrl alt cmd "
+         "caps_lock insert print_screen f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12").split()
+        if hasattr(Key, n)}
 with mss.mss() as _s:
     MON = _s.monitors[1]
 rem = [0.0, 0.0]
