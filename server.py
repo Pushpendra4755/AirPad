@@ -89,7 +89,13 @@ async def agent_ws(ws: WebSocket, s: str, k: str):
                     if p.ok and (not p.busy or time.time() - p.busy > 1):
                         asyncio.create_task(send_frame(p, m["bytes"]))
             elif m.get("text"):                     # reply addressed to one phone (pid)
-                p = ses.phones.get(json.loads(m["text"]).get("pid"))
+                d = json.loads(m["text"])
+                if d.get("t") == "cur":             # pointer position: goes to every approved phone
+                    for p in ses.phones.values():
+                        if p.ok:
+                            asyncio.create_task(tell(p.ws, d))
+                    continue
+                p = ses.phones.get(d.get("pid"))
                 if p:
                     await p.ws.send_text(m["text"])
     finally:
