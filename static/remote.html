@@ -17,7 +17,9 @@ nav{display:flex;gap:6px;padding:6px}nav button{flex:1;padding:10px 2px;font-siz
  background:rgba(8,12,40,.55)}#ov.hide{display:none}
 #pad{flex:1;border-radius:18px;background:rgba(255,255,255,.07);border:1px dashed rgba(255,255,255,.3);display:grid;place-items:center}
 .row{display:flex;gap:8px}.row>*{flex:1}
-textarea{width:100%;height:84px;border-radius:14px;border:1px solid rgba(255,255,255,.3);background:rgba(0,0,0,.3);color:#fff;padding:10px;font:inherit;user-select:text;-webkit-user-select:text;touch-action:auto}
+#p-keys{overflow:auto;touch-action:pan-y}#p-keys>*{flex-shrink:0}
+#kbd{display:flex;flex-direction:column;gap:5px}#kbd button{padding:9px 0;font-size:12px;min-width:0;touch-action:manipulation}
+textarea{width:100%;height:56px;border-radius:14px;border:1px solid rgba(255,255,255,.3);background:rgba(0,0,0,.3);color:#fff;padding:10px;font:inherit;user-select:text;-webkit-user-select:text;touch-action:auto}
 #list{flex:1;overflow:auto;touch-action:pan-y}
 .f{display:flex;justify-content:space-between;gap:8px;padding:11px 8px;border-bottom:1px solid rgba(255,255,255,.12)}
 #game{position:relative;flex:1}
@@ -35,8 +37,7 @@ textarea{width:100%;height:84px;border-radius:14px;border:1px solid rgba(255,255
 
 <section class="panel glass" id="p-keys">
   <textarea id="live" placeholder="Type here: every character appears on the PC instantly"></textarea>
-  <div class="row"><button data-k="esc">Esc</button><button data-k="tab">Tab</button><button data-k="backspace">⌫</button><button data-k="enter">Enter</button></div>
-  <div class="row"><button data-k="left">←</button><button data-k="up">↑</button><button data-k="down">↓</button><button data-k="right">→</button></div>
+  <div id="kbd"></div>
   <div class="row"><button data-c="ctrl,c">Copy</button><button data-c="ctrl,v">Paste</button><button data-c="ctrl,z">Undo</button><button data-c="alt,tab">Alt+Tab</button><button data-k="cmd">Win</button></div>
 </section>
 
@@ -83,13 +84,14 @@ $$('nav button').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;document.body.datas
 
 /* ---- trackpad ---- */
 const cen=t=>{let x=0,y=0;for(const p of t){x+=p.clientX;y+=p.clientY}return[x/t.length,y/t.length]};
-let px,py,t0,moved,fingers,sa=0;
+let px,py,t0,moved,fingers,sa=0,mvx=0,mvy=0,mvq=0;
+const flushMv=()=>{mvq=0;send({t:'mv',dx:mvx,dy:mvy});mvx=mvy=0};
 const pad=$('#pad'),opt={passive:false};
 pad.addEventListener('touchstart',e=>{e.preventDefault();if(e.touches.length===1){t0=Date.now();moved=0;fingers=1}
   else fingers=Math.max(fingers,e.touches.length);[px,py]=cen(e.touches)},opt);
 pad.addEventListener('touchmove',e=>{e.preventDefault();const[x,y]=cen(e.touches),dx=x-px,dy=y-py;px=x;py=y;moved+=Math.abs(dx)+Math.abs(dy);
   const sens=+$('#sens').value;
-  if(e.touches.length===1)send({t:'mv',dx:dx*sens,dy:dy*sens});
+  if(e.touches.length===1){mvx+=dx*sens;mvy+=dy*sens;if(!mvq)mvq=requestAnimationFrame(flushMv)}
   else{sa+=dy/10;const n=Math.trunc(sa);if(n){send({t:'sc',dy:n});sa-=n}}},opt);
 pad.addEventListener('touchend',e=>{e.preventDefault();
   if(!e.touches.length){if(Date.now()-t0<220&&moved<10)send({t:'click',b:fingers>1?'right':'left'});fingers=0}},opt);
@@ -120,6 +122,25 @@ $('#live').addEventListener('input',e=>{
   else if(e.inputType==='deleteContentBackward')send({t:'key',k:'backspace',d:2});
   else if(e.inputType==='insertFromPaste'&&e.data)send({t:'text',s:e.data});
   if($('#live').value.length>200)$('#live').value=''});
+const ROWS=[
+ ['esc','f1','f2','f3','f4','f5','f6','f7','f8','f9','f10','f11','f12'],
+ [...'`1234567890-=','backspace'],
+ ['tab',...'qwertyuiop[]\\'],
+ ['caps_lock',...'asdfghjkl;\'','enter'],
+ ['shift',...'zxcvbnm,./','up'],
+ ['ctrl','cmd','alt','space','left','down','right','delete'],
+ ['home','end','page_up','page_down','insert','print_screen']];
+const MOD=new Set(['shift','ctrl','alt','cmd']),held=new Set();
+const LBL={backspace:'⌫',enter:'⏎',up:'↑',down:'↓',left:'←',right:'→',cmd:'Win',space:'Space',caps_lock:'Caps',page_up:'PgUp',page_down:'PgDn',print_screen:'PrtSc'};
+ROWS.forEach(r=>{const d=document.createElement('div');d.className='row';d.style.gap='4px';
+  r.forEach(k=>{const b=document.createElement('button');b.textContent=LBL[k]||(k.length>1?k[0].toUpperCase()+k.slice(1):k);
+    if(k==='space')b.style.flex='4';
+    b.onclick=()=>{buzz();
+      if(MOD.has(k)){held.has(k)?held.delete(k):held.add(k);b.classList.toggle('on');return}
+      held.size?send({t:'combo',k:[...held,k]}):send({t:'key',k,d:2});
+      held.clear();$$('#kbd .on').forEach(x=>x.classList.remove('on'))};
+    d.append(b)});
+  $('#kbd').append(d)});
 $$('[data-k]').forEach(b=>b.onclick=()=>{buzz();send({t:'key',k:b.dataset.k,d:2})});
 $$('[data-c]').forEach(b=>b.onclick=()=>{buzz();send({t:'combo',k:b.dataset.c.split(',')})});
 
