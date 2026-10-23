@@ -1,13 +1,18 @@
 """AirPad relay server (deploy this). Pairs a PC agent with phones and relays traffic.
 Run: uvicorn server:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips="*"
 Keep ONE worker: sessions live in memory."""
-import asyncio, io, json, secrets, time
+import asyncio, io, json, secrets, time, logging
 from pathlib import Path
+from datetime import datetime
 
 import qrcode, qrcode.image.svg
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 STATIC = Path(__file__).parent / "static"
@@ -114,6 +119,8 @@ async def ui_ws(ws: WebSocket, s: str, k: str):
             p = ses.phones.get(d.get("pid"))
             if p and d.get("t") == "allow":         # permission granted on the PC
                 p.ok = bool(d["ok"])
+                status = "APPROVED" if d["ok"] else "DENIED"
+                logger.info(f"Phone access {status} - Phone ID: {d.get('pid')}, Session: {s}")
                 await tell(p.ws, {"t": "ready" if p.ok else "denied"})
                 await sync(ses)
     except WebSocketDisconnect:
@@ -126,8 +133,11 @@ async def phone_ws(ws: WebSocket, s: str):
     if not ses:
         return await ws.close(1008)
     await ws.accept()
+    # Get client IP for logging
+    client_ip = ws.client.host if ws.client else "Unknown"
     pid, p = secrets.token_hex(4), Phone(ws)
     ses.phones[pid] = p
+    logger.info(f"Phone connected - IP: {client_ip}, Session: {s}, Phone ID: {pid}")
     await tell(ws, {"t": "wait"})
     await tell(ses.ui, {"t": "ask", "pid": pid})
     try:
@@ -143,6 +153,7 @@ async def phone_ws(ws: WebSocket, s: str):
         pass
     finally:
         ses.phones.pop(pid, None)
+        logger.info(f"Phone disconnected - IP: {client_ip}, Phone ID: {pid}")
         await tell(ses.ui, {"t": "gone", "pid": pid})
         await sync(ses)
 
