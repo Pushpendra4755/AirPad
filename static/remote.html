@@ -6,20 +6,10 @@
 <style>
 body{display:flex;flex-direction:column;gap:8px;padding:max(8px,env(safe-area-inset-top)) 8px max(8px,env(safe-area-inset-bottom));
  user-select:none;-webkit-user-select:none;touch-action:none}
-body.fullscreen{padding:0;gap:0}
-body.foldable{flex-direction:row}
 #view{flex:0 0 36vh;overflow:hidden;display:flex;align-items:center;border-radius:18px;background:#000;position:relative}
-body.fullscreen #view{border-radius:0;flex:1}
 canvas{width:100%;height:auto;transform-origin:center}
 [data-tab=zoom] #view{flex:1}[data-tab=files] #view{display:none}[data-tab=game] #view{flex-basis:26vh}
 #rz{position:absolute;right:8px;top:8px;display:none;padding:6px 10px}[data-tab=zoom] #rz{display:block}
-body.fullscreen nav{display:none}body.fullscreen .panel{display:none!important}
-@media (orientation:landscape){
-  body{flex-direction:row}
-  #view{flex:0 0 50vh;width:50%}
-  body.fullscreen #view{width:100%;flex:1}
-  .panel{flex:1}
-}
 .panel{display:none;flex:1;min-height:0;padding:12px;gap:10px;flex-direction:column}
 .panel.on{display:flex}[data-tab=zoom] .panel{display:none!important}
 nav{display:flex;gap:6px;padding:6px}nav button{flex:1;padding:10px 2px;font-size:13px;border-radius:14px}
@@ -62,7 +52,7 @@ textarea{width:100%;height:56px;border-radius:14px;border:1px solid rgba(255,255
 
 <nav class="glass">
   <button data-tab="track" class="on">Trackpad</button><button data-tab="zoom">Zoom</button>
-  <button data-tab="keys">Keys</button><button data-tab="files">Files</button><button data-tab="game">Gamepad</button><button id="touchbtn">Touch</button>
+  <button data-tab="keys">Keys</button><button data-tab="files">Files</button><button data-tab="game">Gamepad</button>
 </nav>
 
 <script>
@@ -88,54 +78,40 @@ ws.onmessage=async e=>{
 };
 ws.onclose=()=>{$('#ov').classList.remove('hide');$('#ovt').textContent='Disconnected';$('#ovs').textContent='Reload this page to reconnect.'};
 
-/* ---- tabs + touch mode ---- */
-let touchMode=false;
-$$('nav button').forEach(b=>{if(b.dataset.tab)b.onclick=()=>{
-  touchMode=false;document.body.classList.remove('fullscreen');
-  tab=b.dataset.tab;document.body.dataset.tab=tab;
+/* ---- tabs ---- */
+$$('nav button').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;document.body.dataset.tab=tab;
   $$('nav button').forEach(x=>x.classList.toggle('on',x===b));
-  $$('.panel').forEach(p=>p.classList.toggle('on',p.id==='p-'+tab));resetZoom();
-  $('#touchbtn').classList.toggle('on',false)
-}});
-$('#touchbtn').onclick=()=>{touchMode=!touchMode;document.body.classList.toggle('fullscreen',touchMode);
-  $('#touchbtn').classList.toggle('on',touchMode);$$('nav button[data-tab]').forEach(x=>x.classList.remove('on'))};
-if(window.screen.width/window.screen.height>1.5){document.body.classList.add('foldable')}
+  $$('.panel').forEach(p=>p.classList.toggle('on',p.id==='p-'+tab));resetZoom()});
 
 /* ---- trackpad ---- */
 const cen=t=>{let x=0,y=0;for(const p of t){x+=p.clientX;y+=p.clientY}return[x/t.length,y/t.length]};
-const dist=t=>t.length<2?0:Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);
-let px,py,t0,moved,fingers,sa=0,mvx=0,mvy=0,mvq=0,padZ=1,padTx=0,padTy=0,padG={};
+let px,py,t0,moved,fingers,sa=0,mvx=0,mvy=0,mvq=0;
 const flushMv=()=>{mvq=0;send({t:'mv',dx:mvx,dy:mvy});mvx=mvy=0};
-const applyPadZoom=()=>pad.style.transform=`translate(${padTx}px,${padTy}px) scale(${padZ})`;
 const pad=$('#pad'),opt={passive:false};
-pad.addEventListener('touchstart',e=>{e.preventDefault();if(e.touches.length===1){t0=Date.now();moved=0;fingers=1;padG={}}
-  else{fingers=Math.max(fingers,e.touches.length);padG={t:Date.now(),d:dist(e.touches),z:padZ,c:cen(e.touches),tx:padTx,ty:padTy}}[px,py]=cen(e.touches)},opt);
+pad.addEventListener('touchstart',e=>{e.preventDefault();if(e.touches.length===1){t0=Date.now();moved=0;fingers=1}
+  else fingers=Math.max(fingers,e.touches.length);[px,py]=cen(e.touches)},opt);
 pad.addEventListener('touchmove',e=>{e.preventDefault();const[x,y]=cen(e.touches),dx=x-px,dy=y-py;px=x;py=y;moved+=Math.abs(dx)+Math.abs(dy);
   const sens=+$('#sens').value;
   if(e.touches.length===1){mvx+=dx*sens;mvy+=dy*sens;if(!mvq)mvq=requestAnimationFrame(flushMv)}
-  else if(e.touches.length===2){const d=dist(e.touches);padZ=Math.min(3,Math.max(1,padG.z*d/padG.d));
-    padTx=padG.tx+x-padG.c[0];padTy=padG.ty+y-padG.c[1];applyPadZoom();sa+=dy/10}
-  else{sa+=dy/10}const n=Math.trunc(sa);if(n&&e.touches.length===1){send({t:'sc',dy:n});sa-=n}},opt);
+  else{sa+=dy/10;const n=Math.trunc(sa);if(n){send({t:'sc',dy:n});sa-=n}}},opt);
 pad.addEventListener('touchend',e=>{e.preventDefault();
-  if(!e.touches.length){if(e.touches.length===0&&Date.now()-t0<220&&moved<10)send({t:'click',b:fingers>1?'right':'left'});fingers=0}
-  else if(e.touches.length===1)padG={t:Date.now(),d:dist(e.touches),z:padZ,c:cen(e.touches),tx:padTx,ty:padTy}},opt);
+  if(!e.touches.length){if(Date.now()-t0<220&&moved<10)send({t:'click',b:fingers>1?'right':'left'});fingers=0}},opt);
 $$('[data-b]').forEach(b=>b.onclick=()=>{buzz();send({t:'click',b:b.dataset.b})});
 let dragging=false;$('#drag').onclick=e=>{dragging=!dragging;e.target.classList.toggle('on',dragging);send({t:'btn',b:'left',d:dragging?1:0})};
 
 /* ---- zoom mode: pinch/pan the view, tap to click where you tap ---- */
 let z=1,tx=0,ty=0,g={};
 const apply=()=>cv.style.transform=`translate(${tx}px,${ty}px) scale(${z})`;
-function resetZoom(){z=1;tx=ty=0;apply();padZ=1;padTx=padTy=0;applyPadZoom()}$('#rz').onclick=resetZoom;
+function resetZoom(){z=1;tx=ty=0;apply()}$('#rz').onclick=resetZoom;
+const dist=t=>t.length<2?0:Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);
 const base=e=>g={t:Date.now(),m:g.m||0,d:dist(e.touches),z,c:cen(e.touches),tx,ty};
 const view=$('#view');
-view.addEventListener('touchstart',e=>{if(tab!=='zoom'&&!touchMode)return;e.preventDefault();if(e.touches.length===1)g={m:0};base(e)},opt);
-view.addEventListener('touchmove',e=>{if(tab!=='zoom'&&!touchMode)return;e.preventDefault();const c=cen(e.touches);
-  if(touchMode){const r=cv.getBoundingClientRect();send({t:'abs',fx:(c[0]-r.left)/r.width,fy:(c[1]-r.top)/r.height});return}
+view.addEventListener('touchstart',e=>{if(tab!=='zoom')return;e.preventDefault();if(e.touches.length===1)g={m:0};base(e)},opt);
+view.addEventListener('touchmove',e=>{if(tab!=='zoom')return;e.preventDefault();const c=cen(e.touches);
   g.m+=Math.abs(c[0]-g.c[0])+Math.abs(c[1]-g.c[1])>0?1:0;
   if(e.touches.length===2)z=Math.min(6,Math.max(1,g.z*dist(e.touches)/g.d));
   tx=g.tx+c[0]-g.c[0];ty=g.ty+c[1]-g.c[1];apply()},opt);
-view.addEventListener('touchend',e=>{if(tab!=='zoom'&&!touchMode)return;e.preventDefault();
-  if(touchMode){send({t:'click',b:'left'});return}
+view.addEventListener('touchend',e=>{if(tab!=='zoom')return;e.preventDefault();
   if(e.touches.length)return base(e);
   if(Date.now()-g.t<250&&g.m<4){const t=e.changedTouches[0],r=cv.getBoundingClientRect();
     send({t:'abs',fx:(t.clientX-r.left)/r.width,fy:(t.clientY-r.top)/r.height});send({t:'click',b:'left'})}},opt);
@@ -147,7 +123,6 @@ $('#live').addEventListener('input',e=>{
   else if(e.inputType==='deleteContentBackward')send({t:'key',k:'backspace',d:2});
   else if(e.inputType==='insertFromPaste'&&e.data)send({t:'text',s:e.data});
   if($('#live').value.length>200)$('#live').value=''});
-$('#live').addEventListener('beforeinput',e=>{if(e.inputType==='insertLineBreak'||e.inputType==='deleteContentBackward')e.preventDefault()},false);
 const ROWS=[
  ['esc','f1','f2','f3','f4','f5','f6','f7','f8','f9','f10','f11','f12'],
  [...'`1234567890-=','backspace'],
@@ -192,14 +167,13 @@ $('#file').onchange=async e=>{for(const f of e.target.files){const C=192*1024,n=
 /* ---- gamepad: edit this map to match your game ---- */
 const PAD={dpad:{'▲':'w','◀':'a','▼':'s','▶':'d'},face:{A:'k',B:'l',X:'j',Y:'i'},mid:{Select:'tab',Start:'enter'},sh:{L:'q',R:'e'}};
 const gm=$('#game');
-function pbtn(label,k,x,y,w,h){const b=document.createElement('button');b.textContent=label;
-  b.style.cssText=`left:${x};top:${y};${w?'width:'+w+';':''}${h?'height:'+h+';':''}`;
-  if(w||h)b.style.borderRadius='50%';
+function pbtn(label,k,x,y,w){const b=document.createElement('button');b.textContent=label;b.style.cssText=`left:${x};top:${y}`;if(w)b.style.width=w,b.style.borderRadius='22px';
   const dn=e=>{e.preventDefault();b.setPointerCapture(e.pointerId);b.classList.add('on');buzz();send({t:'key',k,d:1})};
   const up=e=>{b.classList.remove('on');send({t:'key',k,d:0})};
   b.onpointerdown=dn;b.onpointerup=up;b.onpointercancel=up;b.oncontextmenu=e=>e.preventDefault();gm.append(b)}
-Object.entries(PAD.dpad).forEach(([l,k],i)=>{const pos=[['20px','40%'],['8px','55%'],['20px','70%'],['35px','55%']];pbtn(l,k,pos[i][0],pos[i][1],'52px','52px')});
-Object.entries(PAD.face).forEach(([l,k],i)=>{const pos=[['calc(100% - 50px)','40%'],['calc(100% - 35px)','55%'],['calc(100% - 65px)','55%'],['calc(100% - 50px)','70%']];pbtn(l,k,pos[i][0],pos[i][1],'52px','52px')});
-Object.entries(PAD.mid).forEach(([l,k],i)=>pbtn(l,k,`calc(50% - 60px + ${i*100}px)`,'8px','100px'));
-Object.entries(PAD.sh).forEach(([l,k],i)=>pbtn(l,k,i?'calc(100% - 80px)':'15px','0px','70px','32px'));
+const D=Object.entries(PAD.dpad),dp=[['5%','0%'],['0%','38%'],['5%','76%'],['26%','38%']];
+D.forEach(([l,k],i)=>pbtn(l,k,`calc(${dp[i][0]} + 40px)`,`calc(${dp[i][1]} - 0px)`));
+Object.entries(PAD.face).forEach(([l,k],i)=>pbtn(l,k,`calc(100% - ${[90,150,90,30][i]}px - 40px)`,['0%','38%','76%','38%'][i]));
+Object.entries(PAD.mid).forEach(([l,k],i)=>pbtn(l,k,`calc(50% - 90px + ${i*100}px)`,'60%','80px'));
+Object.entries(PAD.sh).forEach(([l,k],i)=>pbtn(l,k,i?'calc(100% - 90px)':'10px','-4px','80px'));
 </script></body></html>
