@@ -2,6 +2,7 @@
 Run: uvicorn server:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips="*"
 Keep ONE worker: sessions live in memory."""
 import asyncio, io, json, secrets, time
+from collections import deque
 from pathlib import Path
 
 import qrcode, qrcode.image.svg
@@ -11,12 +12,15 @@ from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
 STATIC = Path(__file__).parent / "static"
+LOG_MAX = 300
 sessions: dict = {}
 
 
 class Phone:
-    def __init__(self, ws):
-        self.ws, self.ok, self.busy = ws, False, False
+    def __init__(self, ws, label):
+        self.ws, self.label = ws, label
+        self.ok = self.denied = False
+        self.busy = 0.0
 
 
 class Session:
@@ -24,6 +28,19 @@ class Session:
         self.key = secrets.token_urlsafe(24)   # secret, stays on the PC (agent + PC page)
         self.agent = self.ui = None
         self.phones: dict[str, Phone] = {}
+        self.log = deque(maxlen=LOG_MAX)       # recent events, replayed to the PC page on reload
+
+
+def device_label(ua: str) -> str:
+    """'Android Chrome', 'iPhone Safari', 'Windows Edge', ..."""
+    ua = ua or ""
+    os_ = ("Android" if "Android" in ua else "iPhone" if "iPhone" in ua else "iPad" if "iPad" in ua
+           else "Windows" if "Windows" in ua else "Mac" if "Macintosh" in ua
+           else "Linux" if "Linux" in ua else "Unknown")
+    browser = ("Edge" if "Edg/" in ua else "Firefox" if "Firefox/" in ua
+               else "Chrome" if ("Chrome/" in ua or "CriOS/" in ua)
+               else "Safari" if "Safari/" in ua else "Browser")
+    return f"{os_} {browser}"
 
 
 async def tell(ws, msg):
@@ -32,6 +49,13 @@ async def tell(ws, msg):
             await ws.send_text(json.dumps(msg))
         except Exception:
             pass
+
+
+async def log(ses: Session, event: str, pid=None, device: str = ""):
+    """Record a session event and push it to the PC page."""
+    entry = {"t": "log", "ts": time.strftime("%H:%M:%S"), "event": event, "pid": pid, "device": device}
+    ses.log.append(entry)
+    await tell(ses.ui, entry)
 
 
 async def sync(ses: Session):
@@ -45,6 +69,28 @@ async def send_frame(p: Phone, data: bytes):
         await p.ws.send_bytes(data)
     except Exception:
         p.busy = 0
+
+
+async def release(ses: Session, pid: str, p: Phone):
+    """Make the agent let go of any keys or mouse buttons this phone still holds."""
+    if p.ok and ses.agent:
+        try:
+            await ses.agent.send_text(json.dumps({"t": "release", "pid": pid}))
+        except Exception:
+            pass
+
+
+async def kick(ses: Session, pid: str):
+    p = ses.phones.pop(pid, None)
+    if not p:
+        return
+    await release(ses, pid, p)
+    await log(ses, "kicked", pid, p.label)
+    await sync(ses)
+    try:
+        await p.ws.close(1000)
+    except Exception:
+        pass
 
 
 def get(s: str, k: str | None = None):
@@ -78,7 +124,7 @@ async def agent_ws(ws: WebSocket, s: str, k: str):
         return await ws.close(1008)
     await ws.accept()
     ses.agent = ws
-    await tell(ses.ui, {"t": "agent", "on": True})
+    await log(ses, "agent_on")
     try:
         while True:
             m = await ws.receive()
@@ -91,10 +137,13 @@ async def agent_ws(ws: WebSocket, s: str, k: str):
             elif m.get("text"):                     # reply addressed to one phone (pid)
                 p = ses.phones.get(json.loads(m["text"]).get("pid"))
                 if p:
-                    await p.ws.send_text(m["text"])
+                    try:
+                        await p.ws.send_text(m["text"])
+                    except Exception:
+                        pass
     finally:
         ses.agent = None
-        await tell(ses.ui, {"t": "agent", "on": False})
+        await log(ses, "agent_off")
 
 
 @app.websocket("/ws/ui")
@@ -105,19 +154,32 @@ async def ui_ws(ws: WebSocket, s: str, k: str):
     await ws.accept()
     ses.ui = ws
     await tell(ws, {"t": "agent", "on": ses.agent is not None})
+    await tell(ws, {"t": "history", "log": list(ses.log)})
     for pid, p in ses.phones.items():
-        if not p.ok:
-            await tell(ws, {"t": "ask", "pid": pid})
+        if not (p.ok or p.denied):
+            await tell(ws, {"t": "ask", "pid": pid, "device": p.label})
     try:
         while True:
             d = json.loads(await ws.receive_text())
-            p = ses.phones.get(d.get("pid"))
-            if p and d.get("t") == "allow":         # permission granted on the PC
-                p.ok = bool(d["ok"])
-                await tell(p.ws, {"t": "ready" if p.ok else "denied"})
-                await sync(ses)
+            t, pid = d.get("t"), d.get("pid")
+            if t == "allow":                        # owner's decision on the PC
+                p = ses.phones.get(pid)
+                if p:
+                    p.ok = bool(d["ok"])
+                    p.denied = not p.ok
+                    await tell(p.ws, {"t": "ready" if p.ok else "denied"})
+                    await log(ses, "logged_in" if p.ok else "denied", pid, p.label)
+                    await sync(ses)
+            elif t == "kick":
+                await kick(ses, pid)
+            elif t == "clear":
+                ses.log.clear()
+                await tell(ws, {"t": "cleared"})
     except WebSocketDisconnect:
         pass
+    finally:
+        if ses.ui is ws:
+            ses.ui = None
 
 
 @app.websocket("/ws/phone")
@@ -126,10 +188,10 @@ async def phone_ws(ws: WebSocket, s: str):
     if not ses:
         return await ws.close(1008)
     await ws.accept()
-    pid, p = secrets.token_hex(4), Phone(ws)
-    ses.phones[pid] = p
+    pid = secrets.token_hex(4)
+    p = ses.phones[pid] = Phone(ws, device_label(ws.headers.get("user-agent", "")))
     await tell(ws, {"t": "wait"})
-    await tell(ses.ui, {"t": "ask", "pid": pid})
+    await log(ses, "requested", pid, p.label)
     try:
         while True:
             d = json.loads(await ws.receive_text())
@@ -138,13 +200,17 @@ async def phone_ws(ws: WebSocket, s: str):
                 continue
             if p.ok and ses.agent:                  # nothing is forwarded until the PC approves
                 d["pid"] = pid
-                await ses.agent.send_text(json.dumps(d))
+                try:
+                    await ses.agent.send_text(json.dumps(d))
+                except Exception:
+                    pass
     except WebSocketDisconnect:
         pass
     finally:
-        ses.phones.pop(pid, None)
-        await tell(ses.ui, {"t": "gone", "pid": pid})
-        await sync(ses)
+        if ses.phones.pop(pid, None) is not None:   # kicked phones were already removed
+            await release(ses, pid, p)
+            await log(ses, "logged_out", pid, p.label)
+            await sync(ses)
 
 
 @app.get("/remote")
