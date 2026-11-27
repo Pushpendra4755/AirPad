@@ -20,14 +20,16 @@ A = ap.parse_args()
 ROOT = Path(A.root).resolve()
 CHUNK = 192 * 1024
 mouse, kb = Mouse(), Kb()
-BTN = {"left": Button.left, "right": Button.right}
+BTN = {"left": Button.left, "right": Button.right, "middle": Button.middle}
 KEYS = {n: getattr(Key, n) for n in
         ("enter backspace tab esc space up down left right delete home end page_up page_down shift ctrl alt cmd "
-         "caps_lock insert print_screen f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12").split()
+         "caps_lock insert print_screen pause num_lock scroll_lock menu "
+         "f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12").split()
         if hasattr(Key, n)}
 with mss.mss() as _s:
     MON = _s.monitors[1]
 rem = [0.0, 0.0]
+held = {}   # pid -> {"k": key names, "b": mouse buttons} that this phone currently holds down
 
 
 def safe(rel: str) -> Path:
@@ -39,6 +41,21 @@ def safe(rel: str) -> Path:
 
 def key(k):
     return KEYS.get(k, k)
+
+
+def track(pid, kind, name, down):
+    keys = held.setdefault(pid, {"k": set(), "b": set()})[kind]
+    (keys.add if down else keys.discard)(name)
+
+
+def release_all(pid):
+    h = held.pop(pid, None)
+    if not h:
+        return
+    for k in h["k"]:
+        kb.release(key(k))
+    for b in h["b"]:
+        mouse.release(BTN[b])
 
 
 ARROW = [(0, 0), (0, 17), (4, 13), (8, 21), (11, 20), (7, 12), (12, 12)]
@@ -82,26 +99,33 @@ async def handle(ws, d):
     t, pid = d["t"], d["pid"]
     reply = lambda o: ws.send(json.dumps({**o, "pid": pid}))
     try:
-        if t == "mv":                                   # trackpad (relative)
+        if t == "release":                              # relay: phone left or was kicked
+            release_all(pid)
+        elif t == "mv":                                 # trackpad (relative)
             rem[0] += d["dx"]; rem[1] += d["dy"]
             ix, iy = int(rem[0]), int(rem[1])
             rem[0] -= ix; rem[1] -= iy
             mouse.move(ix, iy)
-        elif t == "abs":                                # zoom mode tap (fractions of screen)
-            mouse.position = (MON["left"] + d["fx"] * MON["width"], MON["top"] + d["fy"] * MON["height"])
+        elif t == "abs":                                # tap in zoom mode, or desktop mouse (fractions)
+            fx, fy = min(1.0, max(0.0, d["fx"])), min(1.0, max(0.0, d["fy"]))
+            mouse.position = (int(MON["left"] + fx * MON["width"]), int(MON["top"] + fy * MON["height"]))
         elif t == "click":
             mouse.click(BTN[d["b"]], d.get("n", 1))
-        elif t == "btn":                                # hold/release for dragging
+        elif t == "btn":                                # press/release: drag lock and desktop mouse
             (mouse.press if d["d"] else mouse.release)(BTN[d["b"]])
+            track(pid, "b", d["b"], bool(d["d"]))
         elif t == "sc":
             mouse.scroll(0, d["dy"])
         elif t == "text":
             kb.type(d["s"])
         elif t == "key":                                # d: 1 down, 0 up, 2 tap (gamepad uses 1/0)
             k = key(d["k"])
-            if d["d"] == 1: kb.press(k)
-            elif d["d"] == 0: kb.release(k)
-            else: kb.tap(k)
+            if d["d"] == 1:
+                kb.press(k); track(pid, "k", d["k"], True)
+            elif d["d"] == 0:
+                kb.release(k); track(pid, "k", d["k"], False)
+            else:
+                kb.tap(k)
         elif t == "combo":
             ks = [key(k) for k in d["k"]]
             for k in ks: kb.press(k)
